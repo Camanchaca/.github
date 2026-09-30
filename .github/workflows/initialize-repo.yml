@@ -1,0 +1,83 @@
+name: Auto Initialize New Repository
+
+on:
+  repository:
+    types: [created]
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Descarga las plantillas almacenadas en el repo administrativo .github
+      - name: Checkout Org Templates
+        uses: actions/checkout@v4
+
+      # 2. Inyecta los archivos y crea las ramas en el nuevo repo
+      - name: Inject Template Files & Create Branches
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.ORG_ADMIN_TOKEN }}
+          script: |
+            const fs = require('fs');
+            const owner = context.payload.organization ? context.payload.organization.login : context.payload.owner.login;
+            const repo = context.payload.repository.name;
+            const defaultBranch = context.payload.repository.default_branch || 'main';
+
+            async function createIfNotExists(path, templateFilePath, defaultContent) {
+              try {
+                // Verificar si el archivo ya existe en el nuevo repo
+                await github.rest.repos.getContent({ owner, repo, path });
+                console.log(`El archivo ${path} ya existe. Omitiendo...`);
+              } catch (e) {
+                // Si no existe (404), se lee la plantilla local o se usa el valor por defecto
+                let content = defaultContent;
+                if (fs.existsSync(templateFilePath)) {
+                  content = fs.readFileSync(templateFilePath, 'utf8');
+                  // Reemplazar variables dinámicas como el nombre del repo
+                  content = content.replace(/{{REPO_NAME}}/g, repo);
+                }
+
+                await github.rest.repos.createOrUpdateFileContents({
+                  owner,
+                  repo,
+                  path,
+                  message: `chore: add default ${path}`,
+                  content: Buffer.from(content).toString('base64'),
+                  branch: defaultBranch
+                });
+                console.log(`Archivo ${path} creado correctamente.`);
+              }
+            }
+
+            // 1. Inyectar plantillas desde la carpeta templates/
+            await createIfNotExists('README.md', 'templates/README.md', `# ${repo}`);
+            await createIfNotExists('.gitignore', 'templates/.gitignore', 'node_modules/\n.env\n');
+            await createIfNotExists('.env.example', 'templates/.env.example', 'PORT=3000\n');
+
+            // 2. Obtener la referencia (SHA) de la rama principal (main)
+            try {
+              const mainRef = await github.rest.git.getRef({ owner, repo, ref: `heads/${defaultBranch}` });
+              const mainSha = mainRef.data.object.sha;
+
+              // Función para crear ramas
+              async function createBranch(branchName) {
+                try {
+                  await github.rest.git.createRef({
+                    owner,
+                    repo,
+                    ref: `refs/heads/${branchName}`,
+                    sha: mainSha
+                  });
+                  console.log(`Rama '${branchName}' creada correctamente.`);
+                } catch (err) {
+                  console.log(`No se pudo crear la rama ${branchName}:`, err.message);
+                }
+              }
+
+              // Crear las ramas secundarias requeridas
+              await createBranch('develop');
+              await createBranch('qas');
+
+            } catch (err) {
+              console.log("Error al obtener la referencia de la rama principal:", err.message);
+            }
