@@ -25,7 +25,7 @@ jobs:
             const fs = require('fs');
             const path = require('path');
 
-            // Captura el nombre enviado automáticamente desde la Cloud Function o de forma manual
+            // Captura el nombre enviado automáticamente desde GCP o de forma manual
             const repo = context.payload.client_payload?.repository || context.inputs?.repo_name;
             const owner = context.payload.client_payload?.organization || 'Camanchaca';
             const defaultBranch = 'main';
@@ -38,25 +38,23 @@ jobs:
 
             console.log(`Inicializando repositorio: ${owner}/${repo}`);
 
-            // Función recursiva para obtener todos los archivos dentro de un directorio
+            // 1. Obtener todos los archivos dentro de templates/ de forma recursiva
             function getAllFiles(dirPath, arrayOfFiles = []) {
-              if (!fs.existsSync(dirPath)) {
-                return arrayOfFiles;
-              }
+              if (!fs.existsSync(dirPath)) return arrayOfFiles;
               const entries = fs.readdirSync(dirPath, { withFileTypes: true });
 
               for (const entry of entries) {
                 const fullPath = path.join(dirPath, entry.name);
                 if (entry.isDirectory()) {
                   arrayOfFiles = getAllFiles(fullPath, arrayOfFiles);
-                } else if (entry.isFile()) {
+                } else {
                   arrayOfFiles.push(fullPath);
                 }
               }
               return arrayOfFiles;
             }
 
-            // Función para crear un archivo en el repositorio si no existe
+            // 2. Función para crear o actualizar un archivo en el repositorio
             async function createIfNotExists(targetPath, templateFilePath) {
               try {
                 await github.rest.repos.getContent({ owner, repo, path: targetPath });
@@ -80,17 +78,24 @@ jobs:
               }
             }
 
-            // 1. Obtener dinámicamente e inyectar todos los archivos de la carpeta templates/
-            const templateFiles = getAllFiles(templatesDir);
-            console.log(`Se encontraron ${templateFiles.length} archivos de plantilla en '${templatesDir}'.`);
+            // 3. Procesar todos los archivos de la carpeta templates/
+            try {
+              const templateFiles = getAllFiles(templatesDir);
+              console.log(`Se encontraron ${templateFiles.length} archivos de plantilla en '${templatesDir}'.`);
 
-            for (const filePath of templateFiles) {
-              // Convertir la ruta local a ruta relativa del repositorio con separadores POSIX (/)
-              const relativePath = path.relative(templatesDir, filePath).replace(/\\/g, '/');
-              await createIfNotExists(relativePath, filePath);
+              for (const filePath of templateFiles) {
+                // Calcular la ruta relativa usando separadores POSIX universales
+                const relativePath = filePath
+                  .substring(templatesDir.length + 1)
+                  .replace(/\\/g, '/');
+
+                await createIfNotExists(relativePath, filePath);
+              }
+            } catch (err) {
+              console.error("Error al procesar archivos de plantilla:", err.message);
             }
 
-            // 2. Crear ramas develop y qas desde la rama principal (main)
+            // 4. Crear ramas develop y qas desde la rama principal (main)
             try {
               const mainRef = await github.rest.git.getRef({ owner, repo, ref: `heads/${defaultBranch}` });
               const mainSha = mainRef.data.object.sha;
