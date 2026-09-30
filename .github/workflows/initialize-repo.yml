@@ -2,8 +2,10 @@ name: Auto Initialize New Repository
 
 on:
 repository_dispatch:
-    types: [repository_created, created]
-  workflow_dispatch: # Permite probar el flujo manualmente si lo deseas
+    types:
+      - repository_created
+      - created
+  workflow_dispatch:
 
 jobs:
   bootstrap:
