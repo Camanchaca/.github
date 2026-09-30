@@ -1,11 +1,14 @@
 name: Auto Initialize New Repository
 
 on:
+  repository_dispatch:
+    types:
+      - repository_created
   workflow_dispatch:
     inputs:
       repo_name:
-        description: 'Nombre del repositorio a inicializar'
-        required: true
+        description: 'Nombre del repositorio (para ejecuciones manuales)'
+        required: false
 
 jobs:
   bootstrap:
@@ -20,9 +23,18 @@ jobs:
           github-token: ${{ secrets.ORG_ADMIN_TOKEN }}
           script: |
             const fs = require('fs');
-            const repo = context.inputs.repo_name;
-            const owner = 'Camanchaca';
+
+            // Captura el nombre enviando automáticamente desde la Cloud Function o de forma manual
+            const repo = context.payload.client_payload?.repository || context.inputs?.repo_name;
+            const owner = context.payload.client_payload?.organization || 'Camanchaca';
             const defaultBranch = 'main';
+
+            if (!repo) {
+              core.setFailed("No se proporcionó el nombre del repositorio objetivo.");
+              return;
+            }
+
+            console.log(`Inicializando repositorio: ${owner}/${repo}`);
 
             async function createIfNotExists(path, templateFilePath, defaultContent) {
               try {
@@ -47,7 +59,7 @@ jobs:
               }
             }
 
-            // 1. Inyectar plantillas
+            // 1. Inyectar plantillas desde templates/
             await createIfNotExists('README.md', 'templates/README.md', `# ${repo}`);
             await createIfNotExists('.gitignore', 'templates/.gitignore', "node_modules/\n.env\n");
             await createIfNotExists('.env.example', 'templates/.env.example', "PORT=3000\n");
@@ -75,5 +87,5 @@ jobs:
               await createBranch('qas');
 
             } catch (err) {
-              console.log("Error al obtener la referencia de main:", err.message);
+              core.setFailed(`Error al acceder al repo '${repo}': ${err.message}`);
             }
