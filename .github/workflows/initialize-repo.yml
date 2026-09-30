@@ -1,7 +1,7 @@
 name: Auto Initialize New Repository
 
 on:
-repository_dispatch:
+  repository_dispatch:
     types:
       - repository_created
       - created
